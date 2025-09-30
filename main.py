@@ -49,6 +49,8 @@ from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
 import argparse
+from datetime import datetime
+from typing import Dict, Any
 
 # Load environment variables
 load_dotenv()
@@ -57,7 +59,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def get_weather(city, api_key):
+def get_weather(city: str, api_key: str) -> Dict[str, Any]:
     """
     Fetch current weather data for a city from OpenWeatherMap API.
     
@@ -71,6 +73,11 @@ def get_weather(city, api_key):
     Raises:
         ValueError: On API error.
     """
+    # Strip whitespace from city name for better validation
+    city = city.strip()
+    if not city:
+        raise ValueError("City name cannot be empty.")
+
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
     try:
         response = requests.get(url, timeout=10)
@@ -83,7 +90,32 @@ def get_weather(city, api_key):
         logger.error(f"API request failed: {e}")
         raise ValueError(f"Failed to fetch weather for {city}: {e}")
 
-def send_email(to_email, subject, body, from_email, password):
+def check_condition(weather_data: Dict[str, Any], condition: str) -> tuple[bool, str]:
+    """
+    Check if the given weather condition is met.
+    
+    Args:
+        weather_data (dict): Weather data from API.
+        condition (str): Condition to check ('hot', 'cold', 'rain').
+    
+    Returns:
+        tuple: (bool: triggered, str: alert message or empty string).
+    """
+    temp = weather_data['main']['temp']
+    main_weather = weather_data['weather'][0]['main']
+    description = weather_data['weather'][0]['description']
+    city = weather_data['name']
+
+    if condition == 'hot' and temp > 30:
+        return True, f"Hot weather alert in {city}! Temperature: {temp}°C"
+    elif condition == 'cold' and temp < 0:
+        return True, f"Cold weather alert in {city}! Temperature: {temp}°C"
+    elif condition == 'rain' and main_weather == 'Rain':
+        return True, f"Rain alert in {city}! Weather: {description}"
+    else:
+        return False, ""
+
+def send_email(to_email: str, subject: str, body: str, from_email: str, password: str) -> None:
     """
     Send an email alert using SMTP (Gmail).
     
@@ -113,8 +145,13 @@ def send_email(to_email, subject, body, from_email, password):
         logger.error(f"Email sending failed: {e}")
         raise ValueError(f"Failed to send email: {e}")
 
-def main():
-    parser = argparse.ArgumentParser(description="Weather CLI for forecasts and alerts")
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Weather CLI for forecasts and alerts",
+        epilog="Examples:\n"
+               "  python weather_cli.py forecast London\n"
+               "  python weather_cli.py alert London hot user@example.com"
+    )
     subparsers = parser.add_subparsers(dest='command', help='Available commands', required=True)
 
     # Forecast subcommand
@@ -138,6 +175,11 @@ def main():
         logger.error("Missing environment variables. Ensure .env has API_KEY, EMAIL, EMAIL_PASSWORD.")
         sys.exit(1)
 
+    # Basic validation for email
+    if args.command == 'alert' and '@' not in args.email:
+        logger.error("Invalid email address provided.")
+        sys.exit(1)
+
     try:
         weather_data = get_weather(args.city, api_key)
 
@@ -148,32 +190,25 @@ def main():
             print(f"Weather in {args.city}: {description.title()}, Temperature: {temp}°C")
 
         elif args.command == 'alert':
-            temp = weather_data['main']['temp']
-            main_weather = weather_data['weather'][0]['main']
-            description = weather_data['weather'][0]['description']
-
-            alert_triggered = False
-            alert_message = ""
-
-            if args.condition == 'hot' and temp > 30:
-                alert_triggered = True
-                alert_message = f"Hot weather alert in {args.city}! Temperature: {temp}°C"
-            elif args.condition == 'cold' and temp < 0:
-                alert_triggered = True
-                alert_message = f"Cold weather alert in {args.city}! Temperature: {temp}°C"
-            elif args.condition == 'rain' and main_weather == 'Rain':
-                alert_triggered = True
-                alert_message = f"Rain alert in {args.city}! Weather: {description}"
-            else:
+            triggered, alert_message = check_condition(weather_data, args.condition)
+            if not triggered:
                 logger.info(f"No alert for {args.condition} in {args.city}")
                 print("No alert needed - condition not met.")
                 return
 
-            if alert_triggered:
-                subject = f"Weather Alert: {args.condition.title()} in {args.city}"
-                body = f"{alert_message}\n\nCurrent conditions: {description}, {temp}°C at {weather_data['dt_txt'] if 'dt_txt' in weather_data else 'now'}."
-                send_email(args.email, subject, body, from_email, email_password)
-                print(f"Alert sent to {args.email}!")
+            temp = weather_data['main']['temp']
+            description = weather_data['weather'][0]['description']
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            subject = f"Weather Alert: {args.condition.title()} in {args.city}"
+            body = (
+                f"{alert_message}\n\n"
+                f"Current conditions: {description.title()}, Temperature: {temp}°C\n"
+                f"Time: {current_time}\n\n"
+                f"Stay prepared!"
+            )
+            send_email(args.email, subject, body, from_email, email_password)
+            print(f"Alert sent to {args.email}!")
 
     except ValueError as e:
         logger.error(str(e))
