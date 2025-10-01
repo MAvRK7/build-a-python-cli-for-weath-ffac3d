@@ -1,4 +1,4 @@
-# build-a-python-cli-for-weath-ffac3d
+# Python CLI for weather forecasting with email alerts
 
 ## Note: This entire repo was made by my other Agentic AI project MACC (Multi Agent Code Collaborator)
 
